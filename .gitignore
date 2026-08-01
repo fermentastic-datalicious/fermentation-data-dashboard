@@ -1,12 +1,51 @@
-.venv/
-__pycache__/
-*.pyc
-.DS_Store
-*.db
-*.sqlite
-*.sqlite3
+# --- Data -------------------------------------------------------------
+# Nothing under data/ is committed. The synthetic sources are regenerable
+# (`python -m src.generators.generate_all`) and the database is rebuilt from
+# them, so there is no reason for either to be in history -- and this is the
+# rule that keeps real experimental data out if this pipeline is ever pointed
+# at a live run.
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Secrets ----------------------------------------------------------
 .streamlit/secrets.toml
+secrets.toml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python -----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches ---------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Notebooks --------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- Editors / OS -----------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
