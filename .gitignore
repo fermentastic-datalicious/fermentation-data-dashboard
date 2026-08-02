@@ -13,6 +13,19 @@ data/processed/*
 *.sqlite
 *.sqlite3
 
+# --- Literature sub-project -------------------------------------------
+# The entire tree stays out of version control. Publisher PDFs are licensed
+# and this repo is public, so rather than relying on per-folder rules to keep
+# documents out, nothing under literature/ is tracked at all.
+#
+# Extracted measurements are facts and will eventually flow into the public
+# pipeline as literature-derived runs -- but they cross that boundary
+# deliberately, through the ingestion layer, not by sitting in this repo.
+literature/
+
+# Belt and braces: no PDF anywhere in this repo, whatever the path.
+*.pdf
+
 # --- Private notes ----------------------------------------------------
 # Claude Code's documented "local instructions" scope. Loads alongside
 # CLAUDE.md automatically, so no import line is needed in the public file.
