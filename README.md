@@ -1,4 +1,4 @@
-# Fermentation Data Dashboard (Portfolio Demo)
+# Fermentation Data Dashboard demo
 
 A standalone demo showing a generalized pipeline for turning raw
 fermentation/bioprocess data into a unified dashboard. Built entirely from
