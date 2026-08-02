@@ -15,7 +15,7 @@ def build(db_path: Path = DB_PATH, data_raw: Path = DATA_RAW, rebuild: bool = Tr
     data = normalize_all(data_raw)
     print(data.summary())
 
-    with connect(db_path) as conn:
+    with connect(db_path, create=True) as conn:  # the one path allowed to create it
         init_db(conn, rebuild=rebuild)
         write_all(conn, data.runs, data.observations, data.samples)
         counts = table_counts(conn)

@@ -4,10 +4,14 @@ Mostly round-trip: what comes back out has to be what went in, because every
 downstream chart reads from here rather than from the parsers.
 """
 
+import sqlite3
+
 import pandas as pd
 import pytest
 
 from src.storage.db import (
+    BUILD_COMMAND,
+    DatabaseNotBuiltError,
     connect,
     init_db,
     read_observations,
@@ -21,7 +25,7 @@ from src.storage.db import (
 @pytest.fixture(scope="module")
 def db(normalized, tmp_path_factory):
     path = tmp_path_factory.mktemp("storage") / "runs.db"
-    with connect(path) as conn:
+    with connect(path, create=True) as conn:
         init_db(conn, rebuild=True)
         write_all(conn, normalized.runs, normalized.observations, normalized.samples)
     return path
@@ -91,6 +95,85 @@ def test_observations_cannot_reference_an_unknown_run(db):
                 "(run_id, timestamp, elapsed_h, source, variable, value, unit, source_file) "
                 "VALUES ('GHOST', '2026-03-02 08:00:00', 0.0, 'bioreactor', 'pH', 7.0, '', 'x.csv')"
             )
+
+
+# --- unbuilt database ---------------------------------------------------
+# The database is not in version control, so a fresh clone has none. That
+# path has to fail in a way that says what to run, and without scattering
+# empty database files around while it does.
+
+
+def test_reading_a_database_that_was_never_built_names_the_build_command(tmp_path):
+    missing = tmp_path / "runs.db"
+
+    with pytest.raises(DatabaseNotBuiltError) as excinfo:
+        with connect(missing) as conn:
+            read_observations(conn)
+
+    message = str(excinfo.value)
+    assert BUILD_COMMAND in message
+    assert str(missing) in message
+
+
+def test_opening_a_missing_database_leaves_no_stray_file(tmp_path):
+    """sqlite3.connect would silently create one; connect() must not."""
+    missing = tmp_path / "runs.db"
+
+    with pytest.raises(DatabaseNotBuiltError):
+        with connect(missing):
+            pass
+
+    assert not missing.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_parent_directory_is_not_created_on_read(tmp_path):
+    nested = tmp_path / "data" / "processed" / "runs.db"
+
+    with pytest.raises(DatabaseNotBuiltError):
+        with connect(nested):
+            pass
+
+    assert not nested.parent.exists()
+
+
+def test_an_empty_database_file_still_reports_what_to_run(tmp_path):
+    """The file exists but was never loaded -- a half-finished build."""
+    empty = tmp_path / "runs.db"
+    sqlite3.connect(empty).close()
+    assert empty.exists()
+
+    with connect(empty) as conn:
+        for read in (read_observations, read_runs, read_samples):
+            with pytest.raises(DatabaseNotBuiltError, match="missing table"):
+                read(conn)
+
+
+def test_a_partly_built_database_is_rejected(tmp_path):
+    """Only some tables present -- reads must not return misleading emptiness."""
+    partial = tmp_path / "runs.db"
+    with connect(partial, create=True) as conn:
+        conn.execute("CREATE TABLE runs (run_id TEXT PRIMARY KEY)")
+
+    with connect(partial) as conn:
+        with pytest.raises(DatabaseNotBuiltError, match="observations"):
+            read_observations(conn)
+
+
+def test_creating_is_opt_in_and_still_works(tmp_path):
+    created = tmp_path / "nested" / "runs.db"
+    with connect(created, create=True) as conn:
+        init_db(conn)
+    assert created.exists()
+
+    with connect(created) as conn:  # now openable without create
+        assert read_observations(conn).empty
+
+
+def test_a_built_database_reads_without_complaint(db):
+    """The guard must not fire on the normal path."""
+    with connect(db) as conn:
+        assert not read_observations(conn, run_ids=["R1"]).empty
 
 
 def test_rebuild_is_idempotent(db, normalized):

@@ -66,13 +66,41 @@ CREATE INDEX IF NOT EXISTS idx_samples_run
 
 TABLES = ("observations", "samples", "runs")
 
+BUILD_COMMAND = "python -m src.storage.build_db --rebuild"
+
+
+class DatabaseNotBuiltError(FileNotFoundError):
+    """The run database has not been built yet.
+
+    Covers both "the file is not there" and "the file is there but has no
+    schema". Either way the fix is the same command, so callers get one thing
+    to catch. Subclasses FileNotFoundError to match how a missing run manifest
+    is reported in `ingestion.run_registry`.
+    """
+
+
+def _not_built(detail: str) -> DatabaseNotBuiltError:
+    return DatabaseNotBuiltError(f"{detail} Build it first: {BUILD_COMMAND}")
+
 
 @contextmanager
-def connect(db_path: Path | str = DB_PATH):
-    """Connection with foreign keys on -- they are off by default in SQLite."""
+def connect(db_path: Path | str = DB_PATH, create: bool = False):
+    """Connection with foreign keys on -- they are off by default in SQLite.
+
+    Opening a missing database is an error rather than a silent create.
+    `sqlite3.connect` will happily conjure an empty file, which turns a
+    "you haven't built the database yet" mistake into a confusing "no such
+    table" several calls later, and litters the disk on the way. Only the
+    loader passes `create=True`; every reader gets the safe default.
+    """
     path = str(db_path)
     if path != ":memory:":
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        if create:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        elif not Path(path).exists():
+            # Raised before sqlite3.connect, so no stray file is left behind.
+            raise _not_built(f"No run database at {path}.")
+
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -80,6 +108,31 @@ def connect(db_path: Path | str = DB_PATH):
         conn.commit()
     finally:
         conn.close()
+
+
+def _database_path(conn: sqlite3.Connection) -> str:
+    """The file backing this connection, for use in error messages."""
+    for _, name, file in conn.execute("PRAGMA database_list"):
+        if name == "main":
+            return file or ":memory:"
+    return "unknown"
+
+
+def require_schema(conn: sqlite3.Connection) -> None:
+    """Fail with the build command if the expected tables are not present.
+
+    Guards the case `connect` cannot catch: a database file that exists but
+    was never loaded, or was only partly built.
+    """
+    present = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    missing = [table for table in TABLES if table not in present]
+    if missing:
+        raise _not_built(
+            f"Run database at {_database_path(conn)} is missing "
+            f"table(s): {', '.join(sorted(missing))}."
+        )
 
 
 def init_db(conn: sqlite3.Connection, rebuild: bool = False) -> None:
@@ -104,6 +157,7 @@ def write_all(
 
 
 def read_runs(conn: sqlite3.Connection) -> pd.DataFrame:
+    require_schema(conn)
     return pd.read_sql_query("SELECT * FROM runs ORDER BY run_id", conn, parse_dates=["start_time"])
 
 
@@ -114,6 +168,8 @@ def read_observations(
     variables: list[str] | None = None,
 ) -> pd.DataFrame:
     """Filtered read of the common schema, parameterized to keep SQL out of callers."""
+    require_schema(conn)
+
     clauses, params = [], []
     for column, values in (("run_id", run_ids), ("source", sources), ("variable", variables)):
         if values:
@@ -129,6 +185,8 @@ def read_observations(
 
 
 def read_samples(conn: sqlite3.Connection, run_ids: list[str] | None = None) -> pd.DataFrame:
+    require_schema(conn)
+
     where, params = "", []
     if run_ids:
         where = f" WHERE run_id IN ({','.join('?' * len(run_ids))})"
