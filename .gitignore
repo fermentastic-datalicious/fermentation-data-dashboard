@@ -13,6 +13,11 @@ data/processed/*
 *.sqlite
 *.sqlite3
 
+# --- Private notes ----------------------------------------------------
+# Claude Code's documented "local instructions" scope. Loads alongside
+# CLAUDE.md automatically, so no import line is needed in the public file.
+CLAUDE.local.md
+
 # --- Secrets ----------------------------------------------------------
 .streamlit/secrets.toml
 secrets.toml
