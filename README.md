@@ -59,10 +59,44 @@ src/ingestion/    parsers/normalizers into the common schema
   align.py          time-tolerant joins
 src/storage/      SQLite schema + read/write helpers
 src/dashboard/    Streamlit app
+  panels.py         what gets plotted, declared as data
+  charts.py         the stacked trend figure
+  drilldown.py      single-run view
+  bootstrap.py      builds the database on first boot
+streamlit_app.py  entry point
 data/raw/         generated synthetic source files (gitignored)
 data/processed/   runs.db (gitignored)
 tests/
 ```
+
+## Dashboard
+
+```bash
+streamlit run streamlit_app.py
+```
+
+A single-run drill-down: every source for one run stacked on a shared time
+axis, with linked zoom and one crosshair across all panels. `data/` is
+gitignored in full, so on a fresh checkout the app generates the synthetic
+sources and builds the database itself on first load — about 3.4 s, once per
+process.
+
+The view is deliberately plain about anomalies. Run R3 is contaminated, and
+the interesting part is that the obvious place to look does not show it: final
+dry cell weight is 9.7 g/L against a healthy run's 9.4. What shows it is three
+independent instruments agreeing at the same moment — off-gas CO₂ climbing
+twentyfold, DO falling and staying down, and the capacitance probe pulling away
+from the offline biomass samples, because a dielectric probe reads *viable*
+cell volume while OD and DCW count dead cells too.
+
+Nothing computes or flags that. The panels share an x-axis and the reader draws
+the conclusion, which is also the honest thing to build: an algorithm asserting
+"contaminated" would be making a call the data supports but does not prove.
+
+Two rules the charts follow, both worth stating because they are where most
+dashboards go wrong: **no dual axes** — two measures of different scale get two
+panels, never two y-scales on one plot — and **sparse data draws as markers**,
+because a line through seven HPLC injections claims measurements nobody took.
 
 ## Setup
 

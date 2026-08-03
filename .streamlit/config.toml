@@ -1,0 +1,14 @@
+# The charts commit to a single light surface: the categorical palette was
+# validated against #fcfcfb specifically, and contrast results are only
+# meaningful against the surface the chart actually renders on. Pinning the
+# theme keeps the app and the plots on the same surface.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#f0efec"
+textColor = "#0b0b0b"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
