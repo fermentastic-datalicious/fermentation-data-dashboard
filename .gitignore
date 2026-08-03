@@ -15,12 +15,14 @@ data/processed/*
 
 # --- Literature sub-project -------------------------------------------
 # The entire tree stays out of version control. Publisher PDFs are licensed
-# and this repo is public, so rather than relying on per-folder rules to keep
-# documents out, nothing under literature/ is tracked at all.
+# and this repo is intended to go public, so rather than relying on per-folder
+# rules to keep documents out, nothing under literature/ is tracked at all.
+# The rule is set now, while it is free, rather than at the moment of flipping
+# visibility.
 #
-# Extracted measurements are facts and will eventually flow into the public
-# pipeline as literature-derived runs -- but they cross that boundary
-# deliberately, through the ingestion layer, not by sitting in this repo.
+# Extracted measurements are facts and will eventually flow into the pipeline
+# as literature-derived runs -- but they cross that boundary deliberately,
+# through the ingestion layer, not by sitting in this repo.
 literature/
 
 # Belt and braces: no PDF anywhere in this repo, whatever the path.
