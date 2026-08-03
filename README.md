@@ -61,7 +61,10 @@ src/storage/      SQLite schema + read/write helpers
 src/dashboard/    Streamlit app
   panels.py         what gets plotted, declared as data
   charts.py         the stacked trend figure
+  cohorts.py        which runs are legitimately comparable
+  data.py           queries and cohort/divergence summaries
   drilldown.py      single-run view
+  comparison.py     one run against its cohort
   bootstrap.py      builds the database on first boot
 streamlit_app.py  entry point
 data/raw/         generated synthetic source files (gitignored)
@@ -110,13 +113,11 @@ control system, derived from the manifest. Overlaying a 96 h CHO fed-batch on
 a 36 h *E. coli* batch is easy to draw and impossible to interpret, so the view
 does not offer it.
 
-The view is deliberately plain about anomalies. Run R3 is contaminated, and
-the interesting part is that the obvious place to look does not show it: final
-dry cell weight is 9.7 g/L against a healthy run's 9.4. What shows it is three
-independent instruments agreeing at the same moment — off-gas CO₂ climbing
-twentyfold, DO falling and staying down, and the capacitance probe pulling away
-from the offline biomass samples, because a dielectric probe reads *viable*
-cell volume while OD and DCW count dead cells too.
+What shows the contamination is three independent instruments agreeing at the
+same moment, and the capacitance probe is the one worth dwelling on: it pulls
+away from the offline biomass samples because a dielectric probe reads *viable*
+cell volume, while OD and DCW count dead cells too. That disagreement between
+two things both called "biomass" is the signal.
 
 Nothing computes or flags that. The panels share an x-axis and the reader draws
 the conclusion, which is also the honest thing to build: an algorithm asserting
