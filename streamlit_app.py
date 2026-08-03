@@ -9,7 +9,7 @@ them on first boot, which takes a few seconds and happens once per container.
 
 import streamlit as st
 
-from src.dashboard import drilldown
+from src.dashboard import comparison, drilldown
 from src.dashboard.bootstrap import ensure_database
 
 st.set_page_config(
@@ -24,6 +24,12 @@ def _database():
     return ensure_database()
 
 
+VIEWS = {
+    "Compare runs": comparison.render,
+    "Single run": drilldown.render,
+}
+
+
 def main() -> None:
     db_path = _database()
 
@@ -35,7 +41,13 @@ def main() -> None:
         "by this repo."
     )
 
-    drilldown.render(db_path)
+    # Comparison leads. A single run in isolation cannot tell you whether it
+    # went well; landing on the cohort view puts that question first.
+    with st.sidebar:
+        st.subheader("View")
+        view = st.radio("View", list(VIEWS), label_visibility="collapsed")
+
+    VIEWS[view](db_path)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from ..ingestion.align import SAMPLE_SOURCES as SPARSE_SOURCES
+from ..ingestion.align import resample_continuous
 from ..storage import DB_PATH, connect, read_observations, read_runs, read_samples
 
 SOURCE_LABELS = {
@@ -42,8 +44,118 @@ def load_samples(run_id: str, db_path: Path = DB_PATH) -> pd.DataFrame:
         return read_samples(conn, run_ids=[run_id])
 
 
+@st.cache_data(show_spinner=False)
+def load_cohort_observations(run_ids: tuple[str, ...], db_path: Path = DB_PATH) -> pd.DataFrame:
+    """Every run in a cohort, in one long frame.
+
+    Takes a tuple rather than a list so the cache key is hashable.
+    """
+    with connect(db_path) as conn:
+        return read_observations(conn, run_ids=list(run_ids))
+
+
 def available_variables(obs: pd.DataFrame) -> set[str]:
     return set(obs["variable"].unique())
+
+
+def comparable_traces(
+    obs: pd.DataFrame, variable: str, run_ids: tuple[str, ...], freq: str = "5min"
+) -> dict[str, pd.DataFrame]:
+    """One run-keyed frame per run, ready to overlay for a single variable.
+
+    Continuous variables are put on a common grid: the runs were logged at
+    different cadences -- 60 s on DASGIP, 120 s on Ambr, 30 s on the off-gas
+    analyser -- and a comparison wants them commensurate rather than at
+    whatever rate each box happened to use. It also cuts an overlay of seven
+    off-gas traces from ~80,000 points to ~3,000.
+
+    Sparse, sample-triggered variables are left exactly as recorded. Resampling
+    seven HPLC injections onto a five-minute grid would invent a dense series
+    out of nothing.
+    """
+    subset = obs[obs["variable"] == variable]
+    if subset.empty:
+        return {}
+
+    sparse = subset["source"].iloc[0] in SPARSE_SOURCES
+    traces = {}
+    for run_id in run_ids:
+        run_obs = subset[subset["run_id"] == run_id].sort_values("elapsed_h")
+        if run_obs.empty:
+            continue
+        traces[run_id] = (
+            run_obs[["elapsed_h", "value"]]
+            if sparse
+            else _resample_one(run_obs, variable, freq)
+        )
+    return traces
+
+
+def _resample_one(run_obs: pd.DataFrame, variable: str, freq: str) -> pd.DataFrame:
+    resampled = resample_continuous(run_obs, run_obs["run_id"].iloc[0], [variable], freq)
+    if resampled.empty:
+        return run_obs[["elapsed_h", "value"]]
+    return resampled[["elapsed_h", variable]].rename(columns={variable: "value"}).dropna()
+
+
+def cohort_outcomes(runs: pd.DataFrame, run_ids: tuple[str, ...]) -> pd.DataFrame:
+    """Endpoint summary for a cohort — the table that gets R3 wrong.
+
+    Included deliberately, because it is what most run reviews stop at, and
+    because on this cohort it ranks the contaminated run first. The caption in
+    the view says so; the traces below it do the correcting.
+    """
+    cohort = runs[runs["run_id"].isin(run_ids)].copy()
+    return cohort[
+        [
+            "run_id",
+            "vessel_id",
+            "duration_h",
+            "final_biomass_total_gL",
+            "final_product_gL",
+            "anomaly",
+        ]
+    ].rename(
+        columns={
+            "run_id": "Run",
+            "vessel_id": "Vessel",
+            "duration_h": "Duration (h)",
+            "final_biomass_total_gL": "Final biomass (g/L)",
+            "final_product_gL": "Final product (g/L)",
+            "anomaly": "Recorded note",
+        }
+    )
+
+
+def divergence_from_cohort(
+    obs: pd.DataFrame, variable: str, run_ids: tuple[str, ...], highlighted: str
+) -> dict[str, float]:
+    """How far the highlighted run sits from the rest, over the second half.
+
+    Plain description, not detection: the median of the other runs is the
+    reference, and the number reported is simply the difference. No threshold,
+    no verdict, no colour coding. A reader decides whether 32 percentage points
+    of dissolved oxygen matters -- and for a different variable it might not.
+    """
+    others = [r for r in run_ids if r != highlighted]
+    if not others:
+        return {}
+
+    subset = obs[obs["variable"] == variable]
+    late = subset[subset["elapsed_h"] >= subset["elapsed_h"].max() / 2]
+    if late.empty:
+        return {}
+
+    focus = late[late["run_id"] == highlighted]["value"]
+    rest = late[late["run_id"].isin(others)]["value"]
+    if focus.empty or rest.empty:
+        return {}
+
+    return {
+        "highlighted": float(focus.mean()),
+        "cohort_median": float(rest.median()),
+        "difference": float(focus.mean() - rest.median()),
+    }
 
 
 def source_provenance(obs: pd.DataFrame) -> pd.DataFrame:

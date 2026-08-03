@@ -35,6 +35,15 @@ SERIES_COLORS = ("#2a78d6", "#eb6834", "#1baf7a")  # blue, orange, aqua
 # story depends on -- it should be labelled regardless.
 LOW_CONTRAST_COLORS = frozenset({"#1baf7a"})
 
+# Comparison view. Only two colours are ever used, whatever the cohort size:
+# the run under inspection, and everything else. That is what keeps the
+# palette's series cap from binding -- a colour-coded overlay tops out at three
+# runs, because a fourth slot puts yellow beside orange and they fail the
+# normal-vision floor at dE 13.7 against a floor of 15.
+HIGHLIGHT_COLOR = SERIES_COLORS[0]
+COHORT_COLOR = "#898781"
+COHORT_OPACITY = 0.45
+
 # Chart chrome. Muted grid and axes so the data reads first.
 SURFACE = "#fcfcfb"
 INK_PRIMARY = "#0b0b0b"
@@ -126,6 +135,19 @@ ACTUATOR_PANELS = (
     Panel("Pressure", "bar", (Trace("pressure", "bioreactor", "Pressure"),)),
     Panel("Temperature", "degC", (Trace("temperature", "bioreactor", "Temperature"),)),
 )
+
+
+def variable_labels() -> dict[str, str]:
+    """Canonical variable -> the human label already given in the panel specs.
+
+    Derived rather than retyped, so a variable cannot end up called one thing
+    in the drill-down and another in the comparison view.
+    """
+    return {
+        trace.variable: trace.label
+        for panel in MAIN_PANELS + ACTUATOR_PANELS
+        for trace in panel.traces
+    }
 
 
 def trace_color(index: int) -> str:

@@ -78,6 +78,12 @@ regenerable from the commands above, so neither belongs in version control.
   seven HPLC injections asserts values nobody measured.
 - Traces over ~2000 points render via `Scattergl`. The renderer changes, the
   data never gets downsampled.
+- Runs are only compared within a **cohort** (`system, strain, mode`), derived
+  from the manifest rather than hardcoded. Cross-organism overlays are
+  prevented by construction.
+- The comparison view highlights one run against a grey cohort, using two
+  colours whatever the cohort size. A colour-per-run overlay caps at three on
+  this palette, and cohorts are already four.
 
 ## Build order
 
@@ -85,4 +91,5 @@ regenerable from the commands above, so neither belongs in version control.
 2. Normalization/ingestion layer into the common schema — done
 3. SQLite run database — done
 4. Dashboard: single-run drill-down — done
-5. Dashboard: multi-run comparison, trends over time — next
+5. Dashboard: multi-run comparison — done
+6. Dashboard: trends over time — next

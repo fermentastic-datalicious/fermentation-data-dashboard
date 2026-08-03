@@ -75,11 +75,40 @@ tests/
 streamlit run streamlit_app.py
 ```
 
-A single-run drill-down: every source for one run stacked on a shared time
+Two views. **Compare runs** puts one run against the rest of its cohort; the
+**single-run** drill-down stacks every source for one run on a shared time
 axis, with linked zoom and one crosshair across all panels. `data/` is
 gitignored in full, so on a fresh checkout the app generates the synthetic
 sources and builds the database itself on first load — about 3.4 s, once per
 process.
+
+### What the comparison view is for
+
+Endpoints for the three *E. coli* runs:
+
+| run | final biomass | final product |
+|---|---|---|
+| R1 | 9.82 g/L | 6.44 g/L |
+| R2 | 9.82 g/L | 6.44 g/L |
+| **R3** | **10.08 g/L** | 6.24 g/L |
+
+R3 is the contaminated run, and on endpoints it has the *highest* biomass —
+dry cell weight counts dead cells, so contamination can raise it. A review that
+stops at final titers ranks it first.
+
+The trajectory says otherwise, three times over: dissolved oxygen sits ~24
+points below its cohort, off-gas CO₂ runs an order of magnitude high, and the
+capacitance probe falls away from a flat dry cell weight. R1 and R2 stay within
+±1.3 points of each other throughout.
+
+That gap between the summary and the trajectory is the clearest argument in
+this project for capturing full time-series rather than endpoints, so the view
+states it rather than leaving it to be noticed.
+
+Runs are only ever compared within a **cohort** — same organism, mode and
+control system, derived from the manifest. Overlaying a 96 h CHO fed-batch on
+a 36 h *E. coli* batch is easy to draw and impossible to interpret, so the view
+does not offer it.
 
 The view is deliberately plain about anomalies. Run R3 is contaminated, and
 the interesting part is that the obvious place to look does not show it: final
