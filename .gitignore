@@ -28,6 +28,11 @@ literature/
 # Belt and braces: no PDF anywhere in this repo, whatever the path.
 *.pdf
 
+# --- Funding / proposal working files -----------------------------------
+# Drafts and working notes, kept out of the public repo for the same reason
+# as literature/: the whole tree is ignored rather than filtered file by file.
+grant/
+
 # --- Private notes ----------------------------------------------------
 # Claude Code's documented "local instructions" scope. Loads alongside
 # CLAUDE.md automatically, so no import line is needed in the public file.
