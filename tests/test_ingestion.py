@@ -19,8 +19,18 @@ from src.ingestion.parsers import (
     parse_hplc_file,
     parse_offgas_file,
 )
-from src.ingestion.run_registry import UnknownRunError, RunRegistry, run_id_from_filename
-from src.ingestion.schema import CANONICAL_UNITS, OBSERVATION_COLUMNS, SOURCES
+from src.ingestion.run_registry import (
+    ManifestError,
+    RunRegistry,
+    UnknownRunError,
+    run_id_from_filename,
+)
+from src.ingestion.schema import (
+    CANONICAL_UNITS,
+    OBSERVATION_COLUMNS,
+    SOURCES,
+    validate_run_conditions,
+)
 
 PARSERS = {
     "dasgip": parse_dasgip_file,
@@ -213,3 +223,55 @@ def test_resampling_puts_runs_of_different_cadence_on_one_grid(normalized):
 def test_missing_manifest_gives_an_actionable_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="generate_all"):
         RunRegistry.load(tmp_path / "run_manifest.csv")
+
+
+# --- run provenance and conditions --------------------------------------
+
+
+def test_a_manifest_without_data_origin_is_refused(registry):
+    """A manifest written before provenance tracking must not load as if flagged."""
+    stale = registry.manifest.drop(columns="data_origin")
+    with pytest.raises(ManifestError, match="generate_all"):
+        RunRegistry(stale)
+
+
+def test_a_manifest_with_an_unknown_origin_is_refused(registry):
+    manifest = registry.manifest
+    manifest.loc[0, "data_origin"] = None
+    with pytest.raises(ManifestError, match=manifest.loc[0, "run_id"]):
+        RunRegistry(manifest)
+
+
+def _conditions(*rows):
+    columns = ["run_id", "field", "value_text", "value_num", "unit", "status", "evidence"]
+    return pd.DataFrame([dict(zip(columns, row)) for row in rows])
+
+
+def test_not_reported_conditions_need_no_evidence():
+    """Absence from the paper is a finding, recorded without a citation."""
+    ok = _conditions(("L1", "antifoam", None, None, None, "not_reported", None))
+    assert validate_run_conditions(ok) is ok
+
+
+@pytest.mark.parametrize(
+    "row, message",
+    [
+        (("L1", "vessel_colour", "blue", None, None, "reported", "p.3"), "unregistered"),
+        (("L1", "antifoam", None, None, None, "unknown", None), "unknown condition status"),
+        (("L1", "working_volume", "3.5 L", 3.5, "L", "reported", None), "without evidence"),
+        (("L1", "working_volume", "3.5 L", 3.5, "L", "reported", "  "), "without evidence"),
+        (("L1", "working_volume", None, None, None, "reported", "p.3"), "without value_text"),
+    ],
+)
+def test_bad_conditions_fail_naming_the_problem(row, message):
+    with pytest.raises(ValueError, match=message):
+        validate_run_conditions(_conditions(row))
+
+
+def test_a_condition_recorded_twice_is_rejected():
+    twice = _conditions(
+        ("L1", "working_volume", "3.5 L", 3.5, "L", "reported", "p.3"),
+        ("L1", "working_volume", "4 L", 4.0, "L", "reported", "p.5"),
+    )
+    with pytest.raises(ValueError, match="more than once"):
+        validate_run_conditions(twice)

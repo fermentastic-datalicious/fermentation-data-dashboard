@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .schema import DATA_ORIGINS
+
 DATA_RAW = Path(__file__).resolve().parents[2] / "data" / "raw"
 MANIFEST_PATH = DATA_RAW / "run_manifest.csv"
 
@@ -21,9 +23,14 @@ class UnknownRunError(KeyError):
     """Raised when a file resolves to a run that is not in the manifest."""
 
 
+class ManifestError(ValueError):
+    """The manifest itself is malformed -- not a lookup miss."""
+
+
 @dataclass(frozen=True)
 class Run:
     run_id: str
+    data_origin: str
     vessel_id: str
     system: str
     mode: str
@@ -38,10 +45,12 @@ class RunRegistry:
     """The manifest, plus the lookups each parser needs to identify its run."""
 
     def __init__(self, manifest: pd.DataFrame):
+        _check_data_origin(manifest)
         self._manifest = manifest
         self._runs = {
             row.run_id: Run(
                 run_id=row.run_id,
+                data_origin=row.data_origin,
                 vessel_id=row.vessel_id,
                 system=row.system,
                 mode=row.mode,
@@ -115,6 +124,25 @@ class RunRegistry:
         """Hours since the run started -- the x-axis for any multi-run overlay."""
         start = pd.Timestamp(self.get(run_id).start_time)
         return (pd.to_datetime(timestamps) - start).dt.total_seconds() / 3600.0
+
+
+def _check_data_origin(manifest: pd.DataFrame) -> None:
+    """Every run must say where it came from, explicitly.
+
+    Checked here rather than left to the database CHECK so that a stale
+    manifest fails at load, with the command that fixes it, instead of at the
+    end of a full ingest.
+    """
+    if "data_origin" not in manifest.columns:
+        raise ManifestError(
+            "run manifest has no data_origin column -- it predates provenance "
+            "tracking. Regenerate it: python -m src.generators.generate_all"
+        )
+    unflagged = manifest.loc[~manifest["data_origin"].isin(DATA_ORIGINS), "run_id"]
+    if not unflagged.empty:
+        raise ManifestError(
+            f"runs without a valid data_origin {DATA_ORIGINS}: {sorted(unflagged)}"
+        )
 
 
 def run_id_from_filename(path: Path, suffix: str) -> str:

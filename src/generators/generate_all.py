@@ -60,6 +60,7 @@ def main() -> None:
 def _manifest_row(params: RunParams, df: pd.DataFrame, system: str) -> dict:
     return {
         "run_id": params.run_id,
+        "data_origin": "synthetic",
         "vessel_id": params.vessel_id,
         "system": system,
         "mode": params.mode,

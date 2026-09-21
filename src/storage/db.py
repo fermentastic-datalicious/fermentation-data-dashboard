@@ -1,8 +1,18 @@
 """SQLite run database.
 
-Three tables: `runs` (the manifest), `observations` (the common schema, one
-numeric measurement per row), and `samples` (per-sample metadata that has no
-business sitting in a numeric value column).
+Three tables carry the measurements: `runs` (the manifest), `observations`
+(the common schema, one numeric measurement per row), and `samples`
+(per-sample metadata that has no business sitting in a numeric value column).
+
+Two more carry provenance for literature-derived runs: `publications` (one
+row per screened paper) and `run_conditions` (experimental conditions, stored
+long with the evidence for each value). Both are empty while every run is
+synthetic.
+
+`runs.data_origin` is enforced by the database rather than by convention.
+It has no default, and a CHECK ties it to `publication_id`: a literature run
+must cite a paper and a synthetic run must not, so neither kind can pass as
+the other.
 
 The load is a full rebuild rather than an upsert. The data is synthetic and
 regenerable in seconds, so incremental-merge logic would be complexity with
@@ -15,13 +25,35 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..ingestion.schema import OBSERVATION_COLUMNS, SAMPLE_COLUMNS
+from ..ingestion.schema import (
+    OBSERVATION_COLUMNS,
+    PUBLICATION_COLUMNS,
+    RUN_CONDITION_COLUMNS,
+    SAMPLE_COLUMNS,
+    validate_run_conditions,
+)
 
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "processed" / "runs.db"
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS publications (
+    publication_id    TEXT PRIMARY KEY,
+    doi               TEXT,
+    first_author      TEXT,
+    year              INTEGER,
+    title             TEXT,
+    journal           TEXT,
+    peer_reviewed     INTEGER NOT NULL CHECK (peer_reviewed IN (0, 1)),
+    tier              TEXT CHECK (tier IN ('A', 'B', 'C')),
+    criteria_version  INTEGER NOT NULL,
+    verified_date     TEXT,
+    report_path       TEXT
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     run_id                  TEXT PRIMARY KEY,
+    data_origin             TEXT NOT NULL CHECK (data_origin IN ('synthetic', 'literature')),
+    publication_id          TEXT REFERENCES publications(publication_id),
     vessel_id               TEXT NOT NULL,
     system                  TEXT NOT NULL,
     mode                    TEXT NOT NULL,
@@ -31,7 +63,20 @@ CREATE TABLE IF NOT EXISTS runs (
     volume_L                REAL,
     anomaly                 TEXT,
     final_biomass_total_gL  REAL,
-    final_product_gL        REAL
+    final_product_gL        REAL,
+    CHECK ((data_origin = 'literature') = (publication_id IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS run_conditions (
+    run_id      TEXT NOT NULL REFERENCES runs(run_id),
+    field       TEXT NOT NULL,
+    value_text  TEXT,
+    value_num   REAL,
+    unit        TEXT,
+    status      TEXT NOT NULL CHECK (status IN ('reported', 'not_reported', 'not_checked')),
+    evidence    TEXT,
+    PRIMARY KEY (run_id, field),
+    CHECK (status != 'reported' OR (value_text IS NOT NULL AND evidence IS NOT NULL))
 );
 
 CREATE TABLE IF NOT EXISTS observations (
@@ -64,7 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_samples_run
     ON samples(run_id);
 """
 
-TABLES = ("observations", "samples", "runs")
+TABLES = ("observations", "samples", "run_conditions", "runs", "publications")
 
 BUILD_COMMAND = "python -m src.storage.build_db --rebuild"
 
@@ -147,13 +192,28 @@ def write_all(
     runs: pd.DataFrame,
     observations: pd.DataFrame,
     samples: pd.DataFrame,
+    publications: pd.DataFrame | None = None,
+    run_conditions: pd.DataFrame | None = None,
 ) -> None:
-    """Write runs first, then the tables that reference them."""
+    """Write parents before children so the foreign keys stay satisfied.
+
+    `publications` and `run_conditions` are optional: nothing produces them
+    until the literature ingestion path exists.
+    """
+    if publications is not None:
+        publications[PUBLICATION_COLUMNS].to_sql(
+            "publications", conn, if_exists="append", index=False
+        )
     runs.to_sql("runs", conn, if_exists="append", index=False)
     observations[OBSERVATION_COLUMNS].to_sql(
         "observations", conn, if_exists="append", index=False, chunksize=10_000
     )
     samples[SAMPLE_COLUMNS].to_sql("samples", conn, if_exists="append", index=False)
+    if run_conditions is not None:
+        validate_run_conditions(run_conditions)
+        run_conditions[RUN_CONDITION_COLUMNS].to_sql(
+            "run_conditions", conn, if_exists="append", index=False
+        )
 
 
 def read_runs(conn: sqlite3.Connection) -> pd.DataFrame:

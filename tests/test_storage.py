@@ -9,6 +9,7 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from src.ingestion.schema import OBSERVATION_COLUMNS, SAMPLE_COLUMNS
 from src.storage.db import (
     BUILD_COMMAND,
     DatabaseNotBuiltError,
@@ -183,3 +184,110 @@ def test_rebuild_is_idempotent(db, normalized):
         write_all(conn, normalized.runs, normalized.observations, normalized.samples)
         counts = table_counts(conn)
     assert counts["observations"] == len(normalized.observations)
+
+
+# --- provenance ---------------------------------------------------------
+# `data_origin` is enforced by the database, not by convention. These tests
+# write deliberately fake literature records -- "TEST_PUB" is not a paper --
+# because no literature ingestion path exists yet to produce real ones.
+
+
+def _insert_run(conn, run_id, data_origin, publication_id=None):
+    conn.execute(
+        "INSERT INTO runs (run_id, data_origin, publication_id, vessel_id, system, mode, start_time) "
+        "VALUES (?, ?, ?, 'V0', 'test', 'batch', '2026-01-01 00:00:00')",
+        (run_id, data_origin, publication_id),
+    )
+
+
+def _insert_publication(conn, publication_id="TEST_PUB"):
+    conn.execute(
+        "INSERT INTO publications (publication_id, peer_reviewed, criteria_version) "
+        "VALUES (?, 1, 1)",
+        (publication_id,),
+    )
+
+
+@pytest.fixture
+def empty_db(tmp_path):
+    path = tmp_path / "runs.db"
+    with connect(path, create=True) as conn:
+        init_db(conn, rebuild=True)
+    return path
+
+
+def test_every_generated_run_is_flagged_synthetic(db):
+    with connect(db) as conn:
+        runs = read_runs(conn)
+    assert set(runs["data_origin"]) == {"synthetic"}
+    assert runs["publication_id"].isna().all()
+
+
+@pytest.mark.parametrize("origin", [None, "", "simulated", "Synthetic"])
+def test_a_run_without_a_valid_origin_is_rejected(empty_db, origin):
+    with connect(empty_db) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_run(conn, "X1", origin)
+
+
+def test_a_literature_run_must_cite_a_publication(empty_db):
+    with connect(empty_db) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_run(conn, "L1", "literature", publication_id=None)
+
+
+def test_a_synthetic_run_cannot_claim_a_publication(empty_db):
+    """Otherwise a generated run could pass as a transcribed one."""
+    with connect(empty_db) as conn:
+        _insert_publication(conn)
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_run(conn, "S1", "synthetic", publication_id="TEST_PUB")
+
+
+def test_a_literature_run_cannot_cite_an_unknown_publication(empty_db):
+    with connect(empty_db) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_run(conn, "L1", "literature", publication_id="NOT_SCREENED")
+
+
+def test_a_reported_condition_needs_its_evidence_in_the_database(empty_db):
+    """The CHECK backs up `validate_run_conditions` for writes that bypass it."""
+    with connect(empty_db) as conn:
+        _insert_publication(conn)
+        _insert_run(conn, "L1", "literature", publication_id="TEST_PUB")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO run_conditions (run_id, field, value_text, status) "
+                "VALUES ('L1', 'working_volume', '3.5 L', 'reported')"
+            )
+
+
+def test_publications_and_conditions_round_trip(empty_db):
+    publications = pd.DataFrame(
+        [{"publication_id": "TEST_PUB", "doi": None, "first_author": None, "year": None,
+          "title": None, "journal": None, "peer_reviewed": 1, "tier": "A",
+          "criteria_version": 1, "verified_date": None, "report_path": None}]
+    )
+    runs = pd.DataFrame(
+        [{"run_id": "L1", "data_origin": "literature", "publication_id": "TEST_PUB",
+          "vessel_id": "V0", "system": "test", "mode": "batch",
+          "start_time": "2026-01-01 00:00:00"}]
+    )
+    conditions = pd.DataFrame(
+        [
+            {"run_id": "L1", "field": "working_volume", "value_text": "3.5 L", "value_num": 3.5,
+             "unit": "L", "status": "reported", "evidence": "Section 2.2, p.3"},
+            {"run_id": "L1", "field": "antifoam", "value_text": None, "value_num": None,
+             "unit": None, "status": "not_reported", "evidence": None},
+        ]
+    )
+    empty = pd.DataFrame(columns=["run_id"])
+    with connect(empty_db) as conn:
+        write_all(conn, runs, empty.reindex(columns=OBSERVATION_COLUMNS),
+                  empty.reindex(columns=SAMPLE_COLUMNS), publications, conditions)
+        stored = pd.read_sql_query("SELECT * FROM run_conditions ORDER BY field", conn)
+        counts = table_counts(conn)
+
+    assert counts["publications"] == 1
+    assert stored["status"].tolist() == ["not_reported", "reported"]
+    assert stored.loc[stored["field"] == "working_volume", "evidence"].iloc[0] == "Section 2.2, p.3"

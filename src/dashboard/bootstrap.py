@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 
 from ..generators import generate_all
-from ..ingestion.run_registry import DATA_RAW
+from ..ingestion.run_registry import DATA_RAW, ManifestError
 from ..storage import DB_PATH, DatabaseNotBuiltError, connect, require_schema
 from ..storage import build_db
 
@@ -50,5 +50,13 @@ def ensure_database(db_path: Path = DB_PATH, data_raw: Path = DATA_RAW) -> Path:
         generate_all.main()
 
     log.info("Ingesting into %s", db_path)
-    build_db.build(db_path=db_path, data_raw=data_raw, rebuild=True)
+    try:
+        build_db.build(db_path=db_path, data_raw=data_raw, rebuild=True)
+    except ManifestError:
+        # Raw sources left over from before a schema change -- a redeploy that
+        # kept `data/`. They are synthetic and regenerable, so replace them
+        # rather than leave the app unable to boot.
+        log.info("Raw sources at %s are stale -- regenerating", data_raw)
+        generate_all.main()
+        build_db.build(db_path=db_path, data_raw=data_raw, rebuild=True)
     return db_path

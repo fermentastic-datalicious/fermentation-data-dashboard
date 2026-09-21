@@ -194,3 +194,143 @@ def validate_observations(obs: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("observations contain null timestamps")
 
     return obs
+
+
+# --- run-level provenance and conditions ---------------------------------
+# Observations say what was measured; these say where a run came from and
+# under what conditions it ran. Both are needed before a literature-derived
+# run can sit in the same database as a generated one.
+
+# Every run carries exactly one of these, set explicitly by whichever path
+# created it. There is deliberately no default: a default is how an unflagged
+# row gets in, and synthetic and literature runs must never be silently mixed.
+DATA_ORIGINS = ("synthetic", "literature")
+
+# `not_reported` is a finding -- the paper was read and does not state it.
+# `not_checked` means nobody looked. Collapsing the two would make a gap in a
+# paper indistinguishable from a gap in the transcription.
+CONDITION_STATUSES = ("reported", "not_reported", "not_checked")
+
+RUN_CONDITION_COLUMNS = [
+    "run_id",
+    "field",
+    "value_text",
+    "value_num",
+    "unit",
+    "status",
+    "evidence",
+]
+
+PUBLICATION_COLUMNS = [
+    "publication_id",
+    "doi",
+    "first_author",
+    "year",
+    "title",
+    "journal",
+    "peer_reviewed",
+    "tier",
+    "criteria_version",
+    "verified_date",
+    "report_path",
+]
+
+# Canonical condition fields, grouped as in the screening protocol's
+# conditions checklist. Stored long in `run_conditions`, one row per field, so
+# adding a field is a registry entry rather than a migration -- the list is
+# expected to change once real papers are transcribed against it.
+#
+# Values are kept in the paper's own words and units. Biomass in particular is
+# reported as OD600, gDCW/L or g wet weight/L, and those are not
+# interchangeable; any conversion happens at read time, never at entry.
+CONDITION_FIELDS = {
+    # organism and inoculum
+    "organism": "organism",
+    "strain": "organism",
+    "genotype": "organism",
+    "inoculum_density": "organism",
+    "inoculum_volume_pct": "organism",
+    # vessel and scale
+    "vessel_type": "vessel",
+    "working_volume": "vessel",
+    "total_volume": "vessel",
+    "mode": "vessel",
+    # medium
+    "medium_type": "medium",
+    "carbon_source": "medium",
+    "carbon_source_initial_conc": "medium",
+    "nitrogen_source": "medium",
+    "key_salts": "medium",
+    "trace_elements": "medium",
+    "antifoam": "medium",
+    # feed (fed-batch and continuous only)
+    "feed_strategy": "feed",
+    "feed_composition": "feed",
+    "feed_concentration": "feed",
+    "feed_start_time": "feed",
+    "feed_rate": "feed",
+    "mu_setpoint": "feed",
+    "dilution_rate": "feed",
+    # control setpoints
+    "temperature_setpoint": "control",
+    "ph_setpoint": "control",
+    "ph_titrant": "control",
+    "do_setpoint": "control",
+    "do_cascade": "control",
+    "aeration_rate": "control",
+    "agitation": "control",
+    "pressure": "control",
+    # induction (recombinant only)
+    "inducer": "induction",
+    "inducer_concentration": "induction",
+    "induction_point": "induction",
+    "post_induction_temperature": "induction",
+    # outcomes
+    "final_biomass": "outcome",
+    "max_biomass": "outcome",
+    "product_titer": "outcome",
+    "yield_product_substrate": "outcome",
+    "yield_product_biomass": "outcome",
+    "volumetric_productivity": "outcome",
+    "mu_max": "outcome",
+    "process_duration": "outcome",
+    # statistics
+    "biological_replicates": "statistics",
+    "error_bars": "statistics",
+}
+
+
+def validate_run_conditions(conditions: pd.DataFrame) -> pd.DataFrame:
+    """Enforce the screening protocol's evidence rule on transcribed conditions.
+
+    The database repeats the status and evidence checks as CHECK constraints;
+    doing them here as well means a bad transcription fails with a message
+    naming the field, not a bare IntegrityError at insert.
+    """
+    missing = [c for c in RUN_CONDITION_COLUMNS if c not in conditions.columns]
+    if missing:
+        raise ValueError(f"run_conditions missing columns: {missing}")
+
+    bad_fields = sorted(set(conditions["field"]) - set(CONDITION_FIELDS))
+    if bad_fields:
+        raise ValueError(f"unregistered condition fields: {bad_fields}")
+
+    bad_statuses = sorted(set(conditions["status"]) - set(CONDITION_STATUSES))
+    if bad_statuses:
+        raise ValueError(f"unknown condition statuses: {bad_statuses}")
+
+    duplicated = conditions[conditions.duplicated(["run_id", "field"], keep=False)]
+    if not duplicated.empty:
+        pairs = sorted(set(zip(duplicated["run_id"], duplicated["field"])))
+        raise ValueError(f"condition recorded more than once: {pairs}")
+
+    # A reported value with no citation is indistinguishable from an inferred
+    # one, and an inferred value is a fabricated data point.
+    reported = conditions[conditions["status"] == "reported"]
+    for column in ("value_text", "evidence"):
+        blank = reported[reported[column].isna() | (reported[column].astype(str).str.strip() == "")]
+        if not blank.empty:
+            pairs = sorted(zip(blank["run_id"], blank["field"]))
+            raise ValueError(f"reported conditions without {column}: {pairs}")
+
+    return conditions
